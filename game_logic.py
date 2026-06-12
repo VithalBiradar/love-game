@@ -3,21 +3,19 @@ game_logic.py
 =============
 Pure game-logic helpers (no Streamlit, no Firebase).
 
-FIXES applied vs original:
-  FIX #5: tick_powerups() checked `player.get("speed_until", 0)` – falsy when 0,
-           so the condition `if player.get("speed_until", 0) and now > ...` was
-           always False after expiry (speed_until was already 0 but the AND
-           short-circuits). Changed to explicit `is not None` and `> 0` guard.
+Changes vs original:
+  - generate_map() now places ~10 obstacles total (reduced from heavy clusters).
+  - All other logic (powerups, collision, spawn, fmt_time) unchanged.
 """
 
 import random
 import time
 
 # ─── Constants ────────────────────────────────────────────────────────────────
-MAP_SIZE        = 20    # 20×20 grid
-GAME_DURATION   = 120   # seconds (2 minutes)
-POWERUP_DURATION = 5    # seconds for speed / shield boosts
-SPEED_BOOST     = 2     # multiplier when speed powerup active
+MAP_SIZE         = 20    # 20×20 grid
+GAME_DURATION    = 120   # seconds (2 minutes)
+POWERUP_DURATION = 5     # seconds for speed / shield boosts
+SPEED_BOOST      = 2     # multiplier when speed powerup active
 
 # ─── Tile IDs ─────────────────────────────────────────────────────────────────
 TILE_EMPTY   = 0
@@ -48,70 +46,75 @@ BLOCKED_TILES = {TILE_TREE, TILE_ROCK, TILE_WATER}
 
 # Background colour hints per tile (for HTML rendering)
 TILE_COLORS = {
-    TILE_EMPTY:   "#1a1a2e",
-    TILE_TREE:    "#1a3a1a",
-    TILE_ROCK:    "#2a2a2a",
-    TILE_BUSH:    "#1a2a1a",
-    TILE_WATER:   "#0a1a3a",
-    TILE_HEART:   "#3a1a1a",
-    TILE_FLOWER:  "#3a1a2a",
-    TILE_STAR:    "#2a2a1a",
-    TILE_COMPASS: "#1a2a2a",
+    TILE_EMPTY:   "#0d0d22",
+    TILE_TREE:    "#0e2010",
+    TILE_ROCK:    "#1e1e1e",
+    TILE_BUSH:    "#122012",
+    TILE_WATER:   "#060e28",
+    TILE_HEART:   "#280a0a",
+    TILE_FLOWER:  "#280a18",
+    TILE_STAR:    "#1e1a08",
+    TILE_COMPASS: "#0a181e",
 }
 
 
 # ─── Map generation ───────────────────────────────────────────────────────────
 def generate_map() -> list:
     """
-    Generate a 20×20 map with randomised terrain.
+    Generate a 20×20 map with sparse obstacles (~10 total blocking tiles).
     Returns a 2D list (row-major: map[y][x]).
-    Firebase requires plain lists, not nested generics.
+
+    Obstacle strategy:
+      - Border trees on all 4 edges (structural walls).
+      - ~5 interior trees/rocks placed as single-tile obstacles.
+      - ~3 water tiles placed as single-tile obstacles.
+      - ~2 bush tiles (non-blocking, decorative cover).
+      - Powerups: 2 hearts, 2 flowers, 1 star, 1 compass.
     """
     grid = [[TILE_EMPTY] * MAP_SIZE for _ in range(MAP_SIZE)]
 
-    # Border trees
+    # ── Border walls (trees) ──────────────────────────────────────────────────
     for i in range(MAP_SIZE):
-        grid[0][i]           = TILE_TREE
+        grid[0][i]            = TILE_TREE
         grid[MAP_SIZE - 1][i] = TILE_TREE
-        grid[i][0]           = TILE_TREE
+        grid[i][0]            = TILE_TREE
         grid[i][MAP_SIZE - 1] = TILE_TREE
 
-    _place_clusters(grid, TILE_TREE,  count=8,  size=3)
-    _place_clusters(grid, TILE_ROCK,  count=10, size=2)
-    _place_clusters(grid, TILE_BUSH,  count=12, size=2)
-    _place_clusters(grid, TILE_WATER, count=4,  size=4)
+    # ── Interior blocking obstacles (~10 total cells) ─────────────────────────
+    # Place as individual tiles spread around the interior to keep it sparse
+    blocking_specs = [
+        # (tile_type, list_of_(x,y) positions)
+        (TILE_TREE,  [(5, 5), (14, 5), (5, 14), (14, 14)]),   # 4 corner trees
+        (TILE_ROCK,  [(10, 7), (10, 12)]),                      # 2 central rocks
+        (TILE_WATER, [(7, 10), (13, 10), (10, 10)]),            # 3 water tiles (horizontal strip)
+    ]
+    for tile, positions in blocking_specs:
+        for x, y in positions:
+            if 1 <= x < MAP_SIZE - 1 and 1 <= y < MAP_SIZE - 1:
+                if grid[y][x] == TILE_EMPTY:
+                    grid[y][x] = tile
 
-    _place_scattered(grid, TILE_HEART,   count=3)
-    _place_scattered(grid, TILE_FLOWER,  count=3)
-    _place_scattered(grid, TILE_STAR,    count=2)
-    _place_scattered(grid, TILE_COMPASS, count=2)
+    # ── Decorative bushes (non-blocking) ─────────────────────────────────────
+    _place_scattered(grid, TILE_BUSH, count=4)
+
+    # ── Powerups ──────────────────────────────────────────────────────────────
+    _place_scattered(grid, TILE_HEART,   count=2)
+    _place_scattered(grid, TILE_FLOWER,  count=2)
+    _place_scattered(grid, TILE_STAR,    count=1)
+    _place_scattered(grid, TILE_COMPASS, count=1)
 
     return grid
-
-
-def _place_clusters(grid, tile, count, size):
-    rows = len(grid)
-    cols = len(grid[0])
-    for _ in range(count):
-        cx = random.randint(2, cols - 3)
-        cy = random.randint(2, rows - 3)
-        for _ in range(size * 3):
-            nx = cx + random.randint(-size, size)
-            ny = cy + random.randint(-size, size)
-            if 1 <= nx < cols - 1 and 1 <= ny < rows - 1:
-                if grid[ny][nx] == TILE_EMPTY:
-                    grid[ny][nx] = tile
 
 
 def _place_scattered(grid, tile, count):
     rows = len(grid)
     cols = len(grid[0])
-    placed = 0
+    placed   = 0
     attempts = 0
     while placed < count and attempts < 500:
         attempts += 1
-        x = random.randint(1, cols - 2)
-        y = random.randint(1, rows - 2)
+        x = random.randint(2, cols - 3)
+        y = random.randint(2, rows - 3)
         if grid[y][x] == TILE_EMPTY:
             grid[y][x] = tile
             placed += 1
@@ -185,12 +188,6 @@ def apply_powerup(player: dict, role: str, tile: int,
 
 
 def tick_powerups(player: dict, now: float) -> dict:
-    """
-    FIX #5: original used `if player.get("speed_until", 0) and now > ...`
-    which is falsy when speed_until == 0, so boosts were never cleared on
-    the very first tick after they expired (speed_until had already been set
-    to 0 by the previous tick that found the expiry).  Use explicit > 0 guard.
-    """
     speed_until   = player.get("speed_until",   0) or 0
     shield_until  = player.get("shield_until",  0) or 0
     compass_until = player.get("compass_until", 0) or 0
