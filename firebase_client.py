@@ -8,44 +8,25 @@ def _check_and_load_secrets() -> str:
     try:
         all_keys = list(st.secrets.keys())
     except Exception as exc:
-        st.error("secrets.toml not found.")
-        st.markdown(f"""
-**Error:** `{exc}`
-
-**Fix:** Create this file:
-
-`C:/Users/user/love game/.streamlit/secrets.toml`
-
-With this content:
-```
-[firebase]
-database_url = "https://love-game-845ed-default-rtdb.asia-southeast1.firebasedatabase.app"
-```
-
-Then restart Streamlit.
-""")
+        st.error("❌ secrets.toml not found. Please create `.streamlit/secrets.toml` with your Firebase config.")
         st.stop()
 
-    st.success(f"secrets.toml loaded. Keys: `{all_keys}`")
-
     if "firebase" not in st.secrets:
-        st.error("[firebase] section missing from secrets.toml.")
+        st.error("❌ `[firebase]` section missing from secrets.toml.")
         st.stop()
 
     cfg = st.secrets["firebase"]
 
     if "database_url" not in cfg:
-        st.error("database_url key missing from [firebase] section.")
+        st.error("❌ `database_url` key missing from `[firebase]` section.")
         st.stop()
 
     db_url = cfg["database_url"].rstrip("/")
-    st.info(f"database_url loaded: `{db_url}`")
 
     if "YOUR-PROJECT" in db_url:
-        st.error("database_url still contains the placeholder. Replace it with your real Firebase URL.")
+        st.error("❌ `database_url` still contains a placeholder. Replace it with your real Firebase URL.")
         st.stop()
 
-    st.success(f"Firebase URL ready: `{db_url}`")
     return db_url
 
 
